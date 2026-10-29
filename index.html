@@ -37,6 +37,8 @@
   button.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); font-weight: 600; }
   button.rec { background: #e5484d; border-color: #e5484d; color: #fff; }
   button:disabled { opacity: .45; cursor: default; }
+  .savelink { color: var(--accent); border: 1px solid var(--accent); border-radius: 6px; padding: 5px 10px; text-decoration: none; }
+  .savelink:hover { background: rgba(47, 230, 183, .1); }
   main { flex: 1; display: flex; min-height: 0; }
   .stage-wrap { flex: 1; display: flex; flex-direction: column; min-width: 0; }
   .stage { flex: 1; position: relative; min-height: 0; overflow: hidden;
@@ -101,6 +103,7 @@
   <span class="spacer"></span>
   <button id="btnPng">PNG</button>
   <button id="btnSvg">SVG</button>
+  <a id="saveLink" class="savelink" hidden title="Download the last export again"></a>
   <button id="btnRec" class="primary">Export animation</button>
 </header>
 <main>
@@ -917,9 +920,20 @@ function download(blob, name) {
   setTimeout(() => URL.revokeObjectURL(a.href), 4000);
 }
 let toastT;
-function toast(msg) {
+function toast(msg, ms = 2400) {
   const t = document.getElementById('toast'); t.textContent = msg; t.classList.add('show');
-  clearTimeout(toastT); toastT = setTimeout(() => t.classList.remove('show'), 2400);
+  clearTimeout(toastT); toastT = setTimeout(() => t.classList.remove('show'), ms);
+}
+// Long renders can outlive the click that started them, and some browsers then block the automatic
+// download. So also keep a "Save" link the user can click directly.
+const saveLink = document.getElementById('saveLink');
+function offerSave(blob, name) {
+  if (saveLink.href) URL.revokeObjectURL(saveLink.href);
+  saveLink.href = URL.createObjectURL(blob);
+  saveLink.download = name;
+  saveLink.textContent = `Save ${name.split('.').pop().toUpperCase()} (${(blob.size / 1e6).toFixed(1)} MB)`;
+  saveLink.hidden = false;
+  download(blob, name);
 }
 document.getElementById('btnPng').onclick = () => {
   render(cv, buildFrame(S, time), mainScratch);
@@ -981,15 +995,25 @@ async function exportAnimation() {
   const frameTime = i => (i / fps) % D;
   const transparent = fmt !== 'mp4' && S.transparent;
 
-  let output, source, zip, dir;
+  let output, source, zip, dir, video;
   if (fmt === 'mp4') {
     const MB = window.Mediabunny;
-    if (!MB || !window.VideoEncoder) throw new Error('MP4 export needs a browser with WebCodecs (Chrome, Edge, or Safari 17+)');
+    if (!MB) throw new Error('The video encoder file (vendor/mediabunny.min.js) did not load. Make sure the vendor folder is deployed next to index.html.');
+    if (!window.VideoEncoder) throw new Error('This browser has no built-in video encoder. Use Chrome or Edge, or export a PNG sequence.');
     const quality = { medium: MB.QUALITY_MEDIUM, high: MB.QUALITY_HIGH, veryHigh: MB.QUALITY_VERY_HIGH }[S.quality] || MB.QUALITY_HIGH;
-    if (!(await MB.canEncodeVideo('avc', { width: S.w, height: S.h, bitrate: quality })))
-      throw new Error(`This browser can't encode H.264 at ${S.w} × ${S.h}`);
-    output = new MB.Output({ format: new MB.Mp4OutputFormat({ fastStart: 'in-memory' }), target: new MB.BufferTarget() });
-    source = new MB.CanvasSource(cv, { codec: 'avc', bitrate: quality, keyFrameInterval: 2 });
+    const opts = { width: S.w, height: S.h, quality };
+    // Prefer H.264 in MP4; fall back to other MP4 codecs, then to WebM, depending on what this machine can encode.
+    let codec = await MB.getFirstEncodableVideoCodec(['avc', 'hevc', 'vp9', 'av1'], opts);
+    video = { format: new MB.Mp4OutputFormat({ fastStart: 'in-memory' }), ext: 'mp4', type: 'video/mp4' };
+    if (!codec) {
+      codec = await MB.getFirstEncodableVideoCodec(['vp9', 'vp8', 'av1'], opts);
+      video = { format: new MB.WebMOutputFormat(), ext: 'webm', type: 'video/webm' };
+    }
+    if (!codec) throw new Error(`This browser can't encode video at ${S.w} × ${S.h}. ` +
+      (S.w * S.h > 1920 * 1080 ? 'Try 1920 × 1080, or export a PNG sequence.' : 'Export a PNG sequence instead.'));
+    video.codec = codec;
+    output = new MB.Output({ format: video.format, target: new MB.BufferTarget() });
+    source = new MB.CanvasSource(cv, { codec, bitrate: quality, keyFrameInterval: 2 });
     output.addVideoTrack(source, { frameRate: fps });
     await output.start();
   } else if (fmt === 'pngFolder') {
@@ -1030,13 +1054,16 @@ async function exportAnimation() {
     }
     if (fmt === 'mp4') {
       await output.finalize();
-      download(new Blob([output.target.buffer], { type: 'video/mp4' }), `${base}.mp4`);
-      toast(`MP4 saved · ${total} frames`);
+      const name = `${base}.${video.ext}`;
+      offerSave(new Blob([output.target.buffer], { type: video.type }), name);
+      toast(video.ext === 'mp4'
+        ? `MP4 ready · ${total} frames (${video.codec.toUpperCase()})`
+        : `This browser can't make MP4 here, so it saved WebM · ${total} frames`, 6000);
     } else if (dir) {
       toast(`${total} PNGs saved to folder "${base}"`);
     } else {
-      download(zip.blob(total), `${base}-png.zip`);
-      toast(`PNG sequence saved · ${total} frames`);
+      offerSave(zip.blob(total), `${base}-png.zip`);
+      toast(`PNG sequence ready · ${total} frames`);
     }
   } finally {
     rec = null;
@@ -1050,7 +1077,7 @@ btnRec.onclick = () => {
   exportAnimation().catch(e => {
     rec = null; btnRec.textContent = 'Export animation'; btnRec.className = 'primary'; dirty = true;
     if (e && e.name === 'AbortError') return; // folder picker dismissed
-    console.error(e); toast(e.message || 'Export failed');
+    console.error(e); toast(e.message || 'Export failed', 9000);
   });
 };
 
