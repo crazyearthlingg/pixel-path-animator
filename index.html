@@ -986,6 +986,50 @@ const btnRec = document.getElementById('btnRec');
 const canvasBlob = (c, type) => new Promise((res, rej) => c.toBlob(b => b ? res(b) : rej(new Error('Frame encode failed')), type));
 const nextPaint = () => new Promise(r => requestAnimationFrame(() => r()));
 
+// Encodes the loop to video. Some GPUs report H.264 support but then fail mid-encode ("Encoding error"),
+// so each failed attempt falls through to the next: hardware MP4 → software MP4 → software WebM.
+async function encodeVideo(job, total, fps, frameTime, progress) {
+  const MB = window.Mediabunny;
+  if (!MB) throw new Error('The video encoder file (vendor/mediabunny.min.js) did not load. Make sure the vendor folder is deployed next to index.html.');
+  if (!window.VideoEncoder) throw new Error('This browser has no built-in video encoder. Use Chrome or Edge, or export a PNG sequence.');
+  const quality = { medium: MB.QUALITY_MEDIUM, high: MB.QUALITY_HIGH, veryHigh: MB.QUALITY_VERY_HIGH }[S.quality] || MB.QUALITY_HIGH;
+  const opts = { width: S.w, height: S.h, quality };
+  const attempts = [];
+  const mp4Codec = await MB.getFirstEncodableVideoCodec(['avc', 'hevc', 'vp9', 'av1'], opts);
+  if (mp4Codec) attempts.push({ codec: mp4Codec, ext: 'mp4', hw: 'no-preference' }, { codec: mp4Codec, ext: 'mp4', hw: 'prefer-software' });
+  const webmCodec = await MB.getFirstEncodableVideoCodec(['vp9', 'vp8'], opts);
+  if (webmCodec) attempts.push({ codec: webmCodec, ext: 'webm', hw: 'prefer-software' });
+  if (!attempts.length) throw new Error(`This browser can't encode video at ${S.w} × ${S.h}. ` +
+    (S.w * S.h > 1920 * 1080 ? 'Try 1920 × 1080, or export a PNG sequence.' : 'Export a PNG sequence instead.'));
+
+  let lastErr;
+  for (const [n, at] of attempts.entries()) {
+    const output = new MB.Output({
+      format: at.ext === 'mp4' ? new MB.Mp4OutputFormat({ fastStart: 'in-memory' }) : new MB.WebMOutputFormat(),
+      target: new MB.BufferTarget(),
+    });
+    const source = new MB.CanvasSource(cv, { codec: at.codec, bitrate: quality, keyFrameInterval: 2, hardwareAcceleration: at.hw });
+    output.addVideoTrack(source, { frameRate: fps });
+    try {
+      await output.start();
+      for (let i = 0; i < total; i++) {
+        if (job.cancelled) { await output.cancel(); return null; }
+        render(cv, buildFrame(S, frameTime(i)), mainScratch);
+        await source.add(i / fps, 1 / fps);
+        await progress(i, n ? `retry ${n} · ` : '');
+      }
+      await output.finalize();
+      return { ...at, blob: new Blob([output.target.buffer], { type: at.ext === 'mp4' ? 'video/mp4' : 'video/webm' }) };
+    } catch (e) {
+      lastErr = e;
+      console.warn('Video encode attempt failed', at, e);
+      try { await output.cancel(); } catch (_) {}
+      if (n < attempts.length - 1) toast(`${at.hw === 'no-preference' ? 'Hardware' : 'Software'} encoder failed, retrying with ${attempts[n + 1].hw === 'prefer-software' ? 'software' : 'another'} encoding…`, 5000);
+    }
+  }
+  throw new Error(`Video encoding failed on this computer (${(lastErr && lastErr.message) || lastErr}). Export a PNG sequence instead.`);
+}
+
 async function exportAnimation() {
   const fmt = S.exportFormat, fps = S.fps, D = S.duration;
   const total = Math.max(1, Math.round(D * S.loops * fps));
@@ -994,33 +1038,18 @@ async function exportAnimation() {
   const job = { cancelled: false };
   const frameTime = i => (i / fps) % D;
   const transparent = fmt !== 'mp4' && S.transparent;
+  const progress = (i, note = '') => {
+    btnRec.textContent = `Cancel · ${note}${Math.round((i + 1) / total * 100)}%`;
+    timeLbl.textContent = `frame ${i + 1} / ${total}`;
+    return i % 4 === 3 ? nextPaint() : null;
+  };
 
-  let output, source, zip, dir, video;
-  if (fmt === 'mp4') {
-    const MB = window.Mediabunny;
-    if (!MB) throw new Error('The video encoder file (vendor/mediabunny.min.js) did not load. Make sure the vendor folder is deployed next to index.html.');
-    if (!window.VideoEncoder) throw new Error('This browser has no built-in video encoder. Use Chrome or Edge, or export a PNG sequence.');
-    const quality = { medium: MB.QUALITY_MEDIUM, high: MB.QUALITY_HIGH, veryHigh: MB.QUALITY_VERY_HIGH }[S.quality] || MB.QUALITY_HIGH;
-    const opts = { width: S.w, height: S.h, quality };
-    // Prefer H.264 in MP4; fall back to other MP4 codecs, then to WebM, depending on what this machine can encode.
-    let codec = await MB.getFirstEncodableVideoCodec(['avc', 'hevc', 'vp9', 'av1'], opts);
-    video = { format: new MB.Mp4OutputFormat({ fastStart: 'in-memory' }), ext: 'mp4', type: 'video/mp4' };
-    if (!codec) {
-      codec = await MB.getFirstEncodableVideoCodec(['vp9', 'vp8', 'av1'], opts);
-      video = { format: new MB.WebMOutputFormat(), ext: 'webm', type: 'video/webm' };
-    }
-    if (!codec) throw new Error(`This browser can't encode video at ${S.w} × ${S.h}. ` +
-      (S.w * S.h > 1920 * 1080 ? 'Try 1920 × 1080, or export a PNG sequence.' : 'Export a PNG sequence instead.'));
-    video.codec = codec;
-    output = new MB.Output({ format: video.format, target: new MB.BufferTarget() });
-    source = new MB.CanvasSource(cv, { codec, bitrate: quality, keyFrameInterval: 2 });
-    output.addVideoTrack(source, { frameRate: fps });
-    await output.start();
-  } else if (fmt === 'pngFolder') {
+  let zip, dir;
+  if (fmt === 'pngFolder') {
     if (!window.showDirectoryPicker) throw new Error('Saving to a folder needs Chrome or Edge — use the .zip option instead');
     const root = await window.showDirectoryPicker({ mode: 'readwrite' });
     dir = await root.getDirectoryHandle(base, { create: true });
-  } else {
+  } else if (fmt !== 'mp4') {
     zip = zipWriter();
   }
 
@@ -1028,38 +1057,33 @@ async function exportAnimation() {
   playing = false; syncPlay();
   btnRec.className = 'rec';
   try {
+    if (fmt === 'mp4') {
+      const res = await encodeVideo(job, total, fps, frameTime, progress);
+      if (!res) { toast('Export cancelled'); return; }
+      offerSave(res.blob, `${base}.${res.ext}`);
+      toast(res.ext === 'mp4'
+        ? `MP4 ready · ${total} frames (${res.codec.toUpperCase()}${res.hw === 'prefer-software' ? ', software' : ''})`
+        : `MP4 isn't possible on this computer, so it saved WebM · ${total} frames`, 6000);
+      return;
+    }
     for (let i = 0; i < total; i++) {
       if (job.cancelled) break;
       render(cv, buildFrame(S, frameTime(i)), mainScratch, transparent);
-      if (fmt === 'mp4') {
-        await source.add(i / fps, 1 / fps);
+      const blob = await canvasBlob(cv, 'image/png');
+      const name = `${base}_${String(i).padStart(pad, '0')}.png`;
+      if (dir) {
+        const fh = await dir.getFileHandle(name, { create: true });
+        const w = await fh.createWritable(); await w.write(blob); await w.close();
       } else {
-        const blob = await canvasBlob(cv, 'image/png');
-        const name = `${base}_${String(i).padStart(pad, '0')}.png`;
-        if (dir) {
-          const fh = await dir.getFileHandle(name, { create: true });
-          const w = await fh.createWritable(); await w.write(blob); await w.close();
-        } else {
-          zip.add(name, new Uint8Array(await blob.arrayBuffer()));
-        }
+        zip.add(name, new Uint8Array(await blob.arrayBuffer()));
       }
-      btnRec.textContent = `Cancel · ${Math.round((i + 1) / total * 100)}%`;
-      timeLbl.textContent = `frame ${i + 1} / ${total}`;
-      if (i % 4 === 3) await nextPaint();
+      await progress(i);
     }
     if (job.cancelled) {
-      if (output) await output.cancel();
       toast('Export cancelled');
       return;
     }
-    if (fmt === 'mp4') {
-      await output.finalize();
-      const name = `${base}.${video.ext}`;
-      offerSave(new Blob([output.target.buffer], { type: video.type }), name);
-      toast(video.ext === 'mp4'
-        ? `MP4 ready · ${total} frames (${video.codec.toUpperCase()})`
-        : `This browser can't make MP4 here, so it saved WebM · ${total} frames`, 6000);
-    } else if (dir) {
+    if (dir) {
       toast(`${total} PNGs saved to folder "${base}"`);
     } else {
       offerSave(zip.blob(total), `${base}-png.zip`);
