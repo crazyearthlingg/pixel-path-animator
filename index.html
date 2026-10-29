@@ -1,0 +1,1064 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Pixel Path Animator</title>
+<style>
+  :root {
+    --bg: #15171e;
+    --panel: #1c1f28;
+    --panel-2: #232733;
+    --line: #2e3342;
+    --text: #e6e8ee;
+    --muted: #8b91a3;
+    --accent: #2fe6b7;
+    --accent-ink: #062b22;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    background: var(--bg); color: var(--text);
+    font: 13px/1.4 "Segoe UI", system-ui, -apple-system, sans-serif;
+    display: flex; flex-direction: column; overflow: hidden;
+  }
+  header {
+    display: flex; align-items: center; gap: 12px; padding: 10px 16px;
+    border-bottom: 1px solid var(--line); background: var(--panel);
+  }
+  header h1 { font-size: 14px; font-weight: 600; margin: 0; letter-spacing: .02em; }
+  header .sub { color: var(--muted); }
+  header .spacer { flex: 1; }
+  button {
+    font: inherit; color: var(--text); background: var(--panel-2);
+    border: 1px solid var(--line); border-radius: 6px; padding: 6px 10px; cursor: pointer;
+  }
+  button:hover { border-color: #4a5166; }
+  button.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); font-weight: 600; }
+  button.rec { background: #e5484d; border-color: #e5484d; color: #fff; }
+  button:disabled { opacity: .45; cursor: default; }
+  main { flex: 1; display: flex; min-height: 0; }
+  .stage-wrap { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+  .stage { flex: 1; position: relative; min-height: 0; overflow: hidden;
+    background: repeating-conic-gradient(#191b22 0 25%, #16181e 0 50%) 0 0/24px 24px; }
+  .stage canvas { position: absolute; box-shadow: 0 10px 40px rgba(0,0,0,.45); cursor: grab; touch-action: none; }
+  .stage canvas.dragging { cursor: grabbing; }
+  .hint { position: absolute; left: 12px; bottom: 10px; color: var(--muted); font-size: 11px;
+    background: rgba(21,23,30,.8); padding: 4px 8px; border-radius: 4px; pointer-events: none; }
+  .transport { display: flex; align-items: center; gap: 10px; padding: 10px 16px;
+    border-top: 1px solid var(--line); background: var(--panel); }
+  .transport input[type=range] { flex: 1; }
+  .transport .time { font-variant-numeric: tabular-nums; color: var(--muted); min-width: 92px; text-align: right; }
+  .transport select { width: auto; }
+  aside.panel { width: 340px; flex: none; overflow-y: auto; background: var(--panel); border-left: 1px solid var(--line); }
+  details { border-bottom: 1px solid var(--line); }
+  summary { padding: 11px 16px; cursor: pointer; font-weight: 600; font-size: 12px; text-transform: uppercase;
+    letter-spacing: .06em; color: #c3c8d4; list-style: none; user-select: none; }
+  summary::-webkit-details-marker { display: none; }
+  summary::before { content: "\25B8"; display: inline-block; width: 14px; color: var(--muted); transition: transform .15s; }
+  details[open] > summary::before { transform: rotate(90deg); }
+  .sec { padding: 2px 16px 14px; display: grid; gap: 10px; }
+  .ctl label { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 4px; color: #c9cdd8; }
+  .ctl .val { display: flex; align-items: center; gap: 3px; color: var(--muted); }
+  input[type=number] { width: 64px; text-align: right; }
+  input[type=number], select, input[type=text] {
+    font: inherit; color: var(--text); background: var(--panel-2); border: 1px solid var(--line);
+    border-radius: 5px; padding: 3px 6px;
+  }
+  select { width: 100%; }
+  input[type=range] { width: 100%; accent-color: var(--accent); margin: 0; }
+  input[type=color] { width: 34px; height: 26px; padding: 0; border: 1px solid var(--line); border-radius: 5px; background: none; cursor: pointer; }
+  .row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  .toggle { display: flex; align-items: center; justify-content: space-between; color: #c9cdd8; }
+  .toggle input { accent-color: var(--accent); width: 16px; height: 16px; }
+  .btns { display: flex; flex-wrap: wrap; gap: 6px; }
+  .btns button { flex: 1 1 auto; }
+  .presets { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  .preset { padding: 0; overflow: hidden; text-align: left; }
+  .preset canvas { display: block; width: 100%; aspect-ratio: 16/9; }
+  .preset span { display: block; padding: 5px 8px; font-size: 12px; }
+  .gradbar { height: 18px; border-radius: 4px; border: 1px solid var(--line); }
+  .stop { display: grid; grid-template-columns: 34px 1fr 52px 26px; gap: 6px; align-items: center; }
+  .stop input[type=number] { width: 100%; }
+  .stop button { padding: 3px 0; }
+  .note { color: var(--muted); font-size: 11.5px; }
+  #toast { position: fixed; left: 50%; bottom: 70px; transform: translateX(-50%); background: #2b3040; color: var(--text);
+    border: 1px solid var(--line); padding: 8px 14px; border-radius: 6px; opacity: 0; transition: opacity .2s; pointer-events: none; z-index: 10; }
+  #toast.show { opacity: 1; }
+  @media (max-width: 820px) {
+    body { overflow: auto; height: auto; }
+    main { flex-direction: column; }
+    .stage { height: 56vw; flex: none; }
+    aside.panel { width: 100%; border-left: 0; overflow: visible; }
+    header .sub { display: none; }
+  }
+</style>
+</head>
+<body>
+<header>
+  <h1>Pixel Path Animator</h1>
+  <span class="sub">Isometric pixel band · gradient overlay · motion</span>
+  <span class="spacer"></span>
+  <button id="btnPng">PNG</button>
+  <button id="btnSvg">SVG</button>
+  <button id="btnRec" class="primary">Export animation</button>
+</header>
+<main>
+  <section class="stage-wrap">
+    <div class="stage" id="stage">
+      <canvas id="cv"></canvas>
+      <div class="hint">Drag: rotate &amp; tilt · Shift/right-drag: move · Wheel: zoom</div>
+    </div>
+    <div class="transport">
+      <button id="btnPlay" title="Play / pause (Space)">Pause</button>
+      <button id="btnRestart" title="Restart">&#8634;</button>
+      <input type="range" id="scrub" min="0" max="1" step="0.001" value="0">
+      <span class="time" id="timeLbl">0.00 / 0.00s</span>
+      <button id="btnPad" title="Dissolve the path into an end pad after it settles">End pad: Off</button>
+      <select id="speed" title="Playback speed">
+        <option value="0.25">0.25×</option><option value="0.5">0.5×</option>
+        <option value="1" selected>1×</option><option value="2">2×</option>
+      </select>
+    </div>
+  </section>
+  <aside class="panel" id="panel"></aside>
+</main>
+<div id="toast"></div>
+
+<script src="vendor/mediabunny.min.js"></script>
+<script>
+(() => {
+'use strict';
+const D2R = Math.PI / 180, TAU = Math.PI * 2;
+const KEY = 'pixelPathAnimator.v1';
+
+const DEFAULTS = {
+  w: 1920, h: 1080, bg: '#2B2E3A',
+  rotation: 45, tilt: 24, roll: 0, pathAngle: 0, pitch: 22, offsetX: -33, offsetY: -22,
+  length: 80, width: 20, gap: 0.4, seed: 7,
+  solid: 0, solidEnd: 'start', solidDither: 0.6,
+  stops: [{ p: 0, c: '#9FD3C8' }, { p: 0.12, c: '#48F0C6' }, { p: 0.55, c: '#2BC3A1' }, { p: 1, c: '#1B7C6D' }],
+  gradAxis: 'along', gradReverse: false,
+  cellWhite: 0.88, fill: 0.92, glow: 12, glowStrength: 0.8, cellGlow: 3,
+  grid: false, gridColor: '#FFFFFF', gridAlpha: 0.07, gridEvery: 1, gridFade: 0.6,
+  mode: 'drawIn', duration: 5, drawPortion: 0.55, easing: 'easeInOut', soft: 0.08,
+  revealDither: 0.15, revealReverse: false, segment: 0.35,
+  flowCycles: 0, flowReverse: false,
+  twinkle: 0.25, twinkleSpeed: 2,
+  pulse: 0, pulseWidth: 0.08, pulseCount: 1,
+  loop: true, fps: 60, loops: 1,
+  exportFormat: 'mp4', quality: 'high', transparent: false,
+  endPad: false, padShape: 'square', padD: 10,
+  dissolveAt: 0.58, dissolveDur: 0.17, dissolveStyle: 'wipe', dissolveDither: 0.3,
+  padOut: true, padOutAt: 0.78, padOutDur: 0.2, padWave: 0.7, padRings: 'shape',
+  padColor: 'rings', padWhite: 0, padFill: 0.12, padGap: 0.3, padEdge: 0, padJitter: 0.12,
+  // Outermost ring first; the last colour fills the centre.
+  padRingList: [
+    { c: '#4A505E', w: 3 }, { c: '#13A383', w: 1 }, { c: '#10D0A3', w: 1 },
+    { c: '#1D7867', w: 1 }, { c: '#F1F2F4', w: 1 },
+  ],
+};
+
+const PRESETS = [
+  { name: 'Teal fade', s: {} },
+  { name: 'Solid → teal', s: {
+    rotation: -46, tilt: 27, pitch: 20, offsetX: 1.8, offsetY: 9, length: 150, width: 22, gap: 0.42,
+    solid: 0.3, solidEnd: 'start', solidDither: 0.55,
+    stops: [{ p: 0, c: '#FFFFFF' }, { p: 0.3, c: '#F1F2F4' }, { p: 0.55, c: '#8D8F9B' }, { p: 0.82, c: '#22E6B5' }, { p: 1, c: '#1EC69F' }],
+    cellWhite: 0.92, fill: 0.85, glow: 10, glowStrength: 0.6, revealDither: 0.25, duration: 6 } },
+  { name: 'Pixel comet', s: {
+    rotation: 45, tilt: 30, pitch: 18, offsetX: 0, offsetY: 0, length: 120, width: 12, mode: 'travel', segment: 0.4,
+    easing: 'linear', duration: 4, soft: 0.25, revealDither: 0.3, grid: true, gridAlpha: 0.08,
+    stops: [{ p: 0, c: '#1B7C6D' }, { p: 0.6, c: '#2BC3A1' }, { p: 1, c: '#7CFFE0' }], gradReverse: false } },
+  { name: 'Data flow', s: {
+    rotation: 30, tilt: 35.26, pitch: 24, offsetX: 0, offsetY: 4, length: 70, width: 14, mode: 'static',
+    flowCycles: 1, pulse: 0.7, pulseWidth: 0.07, pulseCount: 2, twinkle: 0.35, grid: true,
+    stops: [{ p: 0, c: '#FFFFFF' }, { p: 0.4, c: '#8D8F9B' }, { p: 1, c: '#22E6B5' }] } },
+  { name: 'Settle → pad', s: {
+    rotation: 45, tilt: 30, pitch: 22, offsetX: -20, offsetY: -17.7, length: 60, width: 20, gap: 0.4,
+    duration: 7, drawPortion: 0.38, endPad: true, padShape: 'square',
+    dissolveAt: 0.4, dissolveDur: 0.24, padOut: true, padOutAt: 0.7, padOutDur: 0.24,
+    stops: [{ p: 0, c: '#1B7C6D' }, { p: 0.5, c: '#2BC3A1' }, { p: 0.8, c: '#48F0C6' }, { p: 1, c: '#FFD9D9' }] } },
+];
+
+const clone = o => JSON.parse(JSON.stringify(o));
+const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
+const clamp01 = v => clamp(v, 0, 1);
+const lerp = (a, b, t) => a + (b - a) * t;
+const smooth = (e0, e1, x) => { const t = clamp01((x - e0) / (e1 - e0)); return t * t * (3 - 2 * t); };
+const EASE = {
+  linear: t => t,
+  easeOut: t => 1 - Math.pow(1 - t, 3),
+  easeInOut: t => t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2,
+  expoOut: t => t >= 1 ? 1 : 1 - Math.pow(2, -10 * t),
+};
+
+function hexToRgb(h) {
+  h = String(h).replace('#', '');
+  if (h.length === 3) h = h.split('').map(c => c + c).join('');
+  const n = parseInt(h, 16) || 0;
+  return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
+}
+const toHex = c => '#' + c.map(v => Math.round(clamp(v, 0, 255)).toString(16).padStart(2, '0')).join('');
+const rgba = (c, a) => `rgba(${c[0] | 0},${c[1] | 0},${c[2] | 0},${+a.toFixed(3)})`;
+const mix = (a, b, t) => [lerp(a[0], b[0], t), lerp(a[1], b[1], t), lerp(a[2], b[2], t)];
+const WHITE = [255, 255, 255];
+
+function hash(i, j, s) {
+  let h = Math.imul(i + 1, 374761393) ^ Math.imul(j + 1, 668265263) ^ Math.imul(s + 1, 2246822519);
+  h = Math.imul(h ^ (h >>> 13), 1274126177);
+  h ^= h >>> 16;
+  return (h >>> 0) / 4294967296;
+}
+
+function sampler(stops) {
+  const st = stops.map(s => ({ p: s.p, rgb: hexToRgb(s.c) })).sort((a, b) => a.p - b.p);
+  return t => {
+    if (t <= st[0].p) return st[0].rgb;
+    for (let i = 1; i < st.length; i++) {
+      if (t <= st[i].p) {
+        const a = st[i - 1], b = st[i];
+        return mix(a.rgb, b.rgb, (t - a.p) / Math.max(1e-6, b.p - a.p));
+      }
+    }
+    return st[st.length - 1].rgb;
+  };
+}
+// Mirrored wrap keeps the gradient seamless when it flows.
+const mirror = x => { x = ((x % 2) + 2) % 2; return x > 1 ? 2 - x : x; };
+
+let S = load();
+function load() {
+  try {
+    const j = JSON.parse(localStorage.getItem(KEY));
+    if (j) return Object.assign(clone(DEFAULTS), j);
+  } catch (e) {}
+  return clone(DEFAULTS);
+}
+function save() { try { localStorage.setItem(KEY, JSON.stringify(S)); } catch (e) {} }
+
+// ---------- Frame model (shared by canvas, thumbnails and SVG) ----------
+function buildFrame(st, t) {
+  const W = st.w, H = st.h, k = W / 1920, pitch = st.pitch * k;
+  const yaw = st.rotation * D2R, sE = Math.sin(st.tilt * D2R), roll = st.roll * D2R, pa = st.pathAngle * D2R;
+  const cy = Math.cos(yaw), sy = Math.sin(yaw), cr = Math.cos(roll), sr = Math.sin(roll);
+  // Ground plane -> screen: yaw about the vertical axis, foreshorten by sin(tilt), then roll in screen space.
+  const map = (x, y) => {
+    const rx = x * cy - y * sy, ry = (x * sy + y * cy) * sE;
+    return [(rx * cr - ry * sr) * pitch, (rx * sr + ry * cr) * pitch];
+  };
+  const wx = map(1, 0), wy = map(0, 1);
+  const cp = Math.cos(pa), sp = Math.sin(pa);
+  const eu = [wx[0] * cp + wy[0] * sp, wx[1] * cp + wy[1] * sp];
+  const ev = [-wx[0] * sp + wy[0] * cp, -wx[1] * sp + wy[1] * cp];
+  const O = [W / 2 + st.offsetX / 100 * W, H / 2 + st.offsetY / 100 * H];
+
+  const quad = (cu, cv, h) => {
+    const x = O[0] + cu * eu[0] + cv * ev[0], y = O[1] + cu * eu[1] + cv * ev[1];
+    const ux = h * eu[0], uy = h * eu[1], vx = h * ev[0], vy = h * ev[1];
+    return [[x - ux - vx, y - uy - vy], [x + ux - vx, y + uy - vy], [x + ux + vx, y + uy + vy], [x - ux + vx, y - uy + vy]];
+  };
+
+  let grid = null;
+  if (st.grid) {
+    const g = Math.max(1, st.gridEvery | 0);
+    const fx = (st.length % 2) * 0.5, fy = (st.width % 2) * 0.5;
+    const span = (Math.hypot(W, H) + Math.hypot(O[0] - W / 2, O[1] - H / 2)) / (pitch * Math.max(sE, 0.1));
+    const R = Math.min(600, Math.ceil(span / g) * g);
+    const lines = [];
+    for (let n = -R; n <= R; n += g) {
+      const x = n + fx, y = n + fy;
+      lines.push([O[0] + x * wx[0] - R * wy[0], O[1] + x * wx[1] - R * wy[1], O[0] + x * wx[0] + R * wy[0], O[1] + x * wx[1] + R * wy[1]]);
+      lines.push([O[0] + y * wy[0] - R * wx[0], O[1] + y * wy[1] - R * wx[1], O[0] + y * wy[0] + R * wx[0], O[1] + y * wy[1] + R * wx[1]]);
+    }
+    grid = { lines, lw: Math.max(1, k), O, fadeR: st.gridFade > 0 ? Math.max(W, H) * (1.6 - st.gridFade * 1.3) : 0 };
+  }
+
+  // Timeline -> reveal window [tail, head] in "key" space (0..1 along the path).
+  const D = Math.max(0.1, st.duration), ph = clamp01(t / D);
+  const soft = Math.max(0.005, st.soft), E = EASE[st.easing] || EASE.linear;
+  let head = Infinity, tail = -Infinity;
+  if (st.mode === 'drawIn') {
+    head = E(clamp01(t / (D * st.drawPortion))) * (1 + soft);
+  } else if (st.mode === 'drawInOut') {
+    const dt = D * st.drawPortion / 2;
+    head = E(clamp01(t / dt)) * (1 + soft);
+    tail = E(clamp01((t - (D - dt)) / dt)) * (1 + soft) - soft;
+  } else if (st.mode === 'travel') {
+    head = E(ph) * (1 + st.segment + 2 * soft);
+    tail = head - st.segment - soft;
+  }
+
+  const sample = sampler(st.stops);
+  const flow = st.flowCycles * 2 * ph * (st.flowReverse ? -1 : 1);
+  const L = Math.max(1, st.length | 0), N = Math.max(1, st.width | 0);
+  const fill = 1 - st.gap, seed = st.seed | 0;
+  const pw = Math.max(0.01, st.pulseWidth);
+  const pq = st.pulseCount > 0 ? ((ph * st.pulseCount) % 1) * (1 + 4 * pw) - 2 * pw : null;
+  const tiles = [], cells = [];
+
+  // End pad: once the path settles it dissolves, leaving a square/rectangular pad at its last point.
+  let pad = null, dp = 0, po = 0;
+  if (st.endPad && (st.mode === 'drawIn' || st.mode === 'static')) {
+    dp = clamp01((ph - st.dissolveAt) / Math.max(0.01, st.dissolveDur));
+    po = st.padOut ? clamp01((ph - st.padOutAt) / Math.max(0.01, st.padOutDur)) : 0;
+    // The pad is the end section of the path itself: same width, flush with its edges and its last row.
+    const pw = N;
+    const pd = clamp(st.padShape === 'square' ? N : st.padD | 0, 1, L);
+    const es = st.revealReverse ? -1 : 1, uEnd = es * (L - 1) / 2;
+    const uc = uEnd - es * (pd - 1) / 2, vc = 0;
+    const stopsRgb = st.stops.map(s => hexToRgb(s.c));
+    const bgRgb = hexToRgb(st.bg);
+    pad = {
+      uc, vc, pw, pd, hd: pd / 2, hw: pw / 2,
+      grey: mix(bgRgb, WHITE, 0.25),
+      end: sample(st.revealReverse ? 0 : 1),
+      palette: [...stopsRgb, WHITE, ...stopsRgb.map(c => mix(c, bgRgb, 0.45))],
+      rings: (st.padRingList || []).map(r => ({ rgb: hexToRgb(r.c), w: Math.max(1, r.w | 0) })),
+      bg: bgRgb,
+    };
+  }
+  const inPad = (u, v) => pad && Math.abs(u - pad.uc) < pad.hd && Math.abs(v - pad.vc) < pad.hw;
+  const padDist = (u, v) => Math.max(Math.abs(u - pad.uc) / pad.hd, Math.abs(v - pad.vc) / pad.hw);
+  // Distance used for the concentric rings: rings follow the pad's shape, or are circular.
+  const ringDist = (u, v) => st.padRings === 'circle'
+    ? Math.hypot(u - pad.uc, v - pad.vc) / Math.hypot(pad.hd, pad.hw)
+    : padDist(u, v);
+  // Ring colour: which ring (counted in cells from the pad's outer edge) a cell sits in.
+  const ringColor = (u, v) => {
+    const e = st.padRings === 'circle'
+      ? Math.floor((1 - ringDist(u, v)) * Math.min(pad.hd, pad.hw))
+      : Math.round(Math.min(pad.hd - Math.abs(u - pad.uc), pad.hw - Math.abs(v - pad.vc)) - 0.5);
+    let cum = 0;
+    for (const ring of pad.rings) { cum += ring.w; if (e < cum) return ring.rgb; }
+    return pad.rings.length ? pad.rings[pad.rings.length - 1].rgb : pad.end;
+  };
+
+  for (let i = 0; i < L; i++) {
+    for (let j = 0; j < N; j++) {
+      const u = i - (L - 1) / 2, v = j - (N - 1) / 2;
+      const along = L > 1 ? i / (L - 1) : 0;
+      const a = st.revealReverse ? 1 - along : along;
+      const r = hash(i, j, seed);
+      const key = a * (1 - st.revealDither) + r * st.revealDither;
+      let vis = clamp01((head - key) / soft) * clamp01((key - tail) / soft);
+      let padK = 0, edge = 0, wave = 0;
+      if (pad) {
+        if (inPad(u, v)) {
+          edge = st.padEdge > 0 ? smooth(1 - st.padEdge, 1.05, padDist(u, v) + (r - 0.5) * 0.2) : 0;
+          // The pad forms ring by ring from its centre outward.
+          const rd = ringDist(u, v);
+          const key3 = rd * (1 - st.dissolveDither) + r * st.dissolveDither;
+          padK = clamp01((dp * (1 + soft) - key3) / soft);
+          // Then a ripple travels outward; each ring lights up as the front reaches it and disappears behind it.
+          if (po > 0) {
+            const key4 = rd * (1 - st.dissolveDither * 0.5) + r * st.dissolveDither * 0.5;
+            const front = po * (1 + soft + 0.1);
+            vis *= 1 - clamp01((front - key4) / soft);
+            const d = (key4 - front) / 0.08;
+            wave = st.padWave * Math.exp(-d * d) * smooth(0, 0.05, po);
+          }
+        } else {
+          const key2 = st.dissolveStyle === 'scatter' ? r : a * (1 - st.dissolveDither) + r * st.dissolveDither;
+          vis *= 1 - clamp01((dp * (1 + soft) - key2) / soft);
+        }
+      }
+      if (vis <= 0.001) continue;
+
+      let gt = st.gradAxis === 'along' ? along : (N > 1 ? clamp01(j / (N - 1)) : 0);
+      if (st.gradReverse) gt = 1 - gt;
+      let base = sample(mirror(gt - flow));
+      if (padK > 0) {
+        let pc = base;
+        if (st.padColor === 'rings') pc = ringColor(u, v);
+        else if (st.padColor === 'mosaic') pc = pad.palette[Math.floor(hash(i + 31, j + 17, seed) * pad.palette.length)];
+        else if (st.padColor === 'end') pc = pad.end;
+        if (st.padJitter > 0) {
+          const jt = (hash(i + 7, j + 3, seed) - 0.5) * 2 * st.padJitter;
+          pc = jt > 0 ? mix(pc, WHITE, jt * 0.5) : mix(pc, pad.bg, -jt * 0.6);
+        }
+        base = mix(base, mix(pc, pad.grey, edge), padK);
+      }
+
+      let solidK = 0;
+      if (st.solid > 0) {
+        const z = (st.solidEnd === 'start' ? along : 1 - along) + (r - 0.5) * st.solidDither * st.solid;
+        solidK = (1 - smooth(st.solid * 0.55, st.solid, z)) * (1 - padK);
+      }
+      let pulse = 0;
+      if (pq !== null && st.pulse > 0) { const d = (a - pq) / pw; pulse = Math.exp(-d * d) * st.pulse; }
+      let tw = 0;
+      if (st.twinkle > 0) {
+        const r2 = hash(j + 101, i + 57, seed);
+        const f = Math.max(1, st.twinkleSpeed | 0) * (1 + Math.floor(r2 * 3));
+        tw = st.twinkle * Math.pow(0.5 + 0.5 * Math.sin(TAU * (ph * f + r2 * 7.31)), 6);
+      }
+
+      const lit = pulse + wave;
+      const tileC = mix(base, WHITE, lit * 0.5);
+      const white = lerp(st.cellWhite, st.padWhite, padK);
+      const cellC = mix(base, WHITE, clamp01(white + lit) * (1 - tw * (1 - wave)));
+      let h = 0.5 * lerp(lerp(fill, 1.03, solidK), 1 - st.padGap, padK) * (1 + lit * 0.25);
+      h = Math.min(h, solidK > 0 ? 0.515 : 0.5) * (0.35 + 0.65 * vis);
+      const fade = 1 - 0.6 * edge * padK;
+      tiles.push({ q: quad(u, v, 0.515), c: tileC, a: vis * lerp(1, st.padFill, padK) * fade });
+      cells.push({ q: quad(u, v, h), c: cellC, a: Math.min(1, vis * 1.4) * fade });
+    }
+  }
+  return { W, H, k, grid, tiles, cells, st };
+}
+
+// ---------- Canvas renderer ----------
+const cv = document.getElementById('cv');
+const ctx = cv.getContext('2d');
+const tilesCv = document.createElement('canvas'), tctx = tilesCv.getContext('2d');
+const cellsCv = document.createElement('canvas'), cctx = cellsCv.getContext('2d');
+
+function poly(c, q) {
+  c.beginPath(); c.moveTo(q[0][0], q[0][1]);
+  c.lineTo(q[1][0], q[1][1]); c.lineTo(q[2][0], q[2][1]); c.lineTo(q[3][0], q[3][1]);
+  c.closePath();
+}
+
+function render(target, F, scratch, transparent = false) {
+  const { W, H, k, st } = F;
+  const c = target.getContext('2d');
+  const [tc, tcx, cc, ccx] = scratch;
+  for (const x of [target, tc, cc]) if (x.width !== W || x.height !== H) { x.width = W; x.height = H; }
+  c.save();
+  c.globalCompositeOperation = 'source-over'; c.globalAlpha = 1; c.filter = 'none';
+  c.clearRect(0, 0, W, H);
+  if (!transparent) { c.fillStyle = st.bg; c.fillRect(0, 0, W, H); }
+
+  if (F.grid) {
+    const g = F.grid, gc = hexToRgb(st.gridColor);
+    c.beginPath();
+    for (const l of g.lines) { c.moveTo(l[0], l[1]); c.lineTo(l[2], l[3]); }
+    if (g.fadeR) {
+      const rg = c.createRadialGradient(g.O[0], g.O[1], 0, g.O[0], g.O[1], g.fadeR);
+      rg.addColorStop(0, rgba(gc, st.gridAlpha)); rg.addColorStop(1, rgba(gc, 0));
+      c.strokeStyle = rg;
+    } else c.strokeStyle = rgba(gc, st.gridAlpha);
+    c.lineWidth = g.lw; c.stroke();
+  }
+
+  tcx.clearRect(0, 0, W, H);
+  for (const t of F.tiles) { tcx.fillStyle = rgba(t.c, t.a); poly(tcx, t.q); tcx.fill(); }
+  ccx.clearRect(0, 0, W, H);
+  for (const t of F.cells) { ccx.fillStyle = rgba(t.c, t.a); poly(ccx, t.q); ccx.fill(); }
+
+  if (st.glow > 0 && st.glowStrength > 0) {
+    c.globalCompositeOperation = 'screen';
+    c.filter = `blur(${st.glow * k}px)`;
+    let s = st.glowStrength;
+    while (s > 0) { c.globalAlpha = Math.min(1, s); c.drawImage(tc, 0, 0); s -= 1; }
+    c.filter = 'none'; c.globalCompositeOperation = 'source-over';
+  }
+  c.globalAlpha = st.fill; c.drawImage(tc, 0, 0); c.globalAlpha = 1;
+  if (st.cellGlow > 0) {
+    c.globalCompositeOperation = 'screen';
+    c.filter = `blur(${st.cellGlow * k}px)`;
+    c.drawImage(cc, 0, 0);
+    c.filter = 'none'; c.globalCompositeOperation = 'source-over';
+  }
+  c.drawImage(cc, 0, 0);
+  c.restore();
+}
+const mainScratch = [tilesCv, tctx, cellsCv, cctx];
+
+// ---------- SVG export (layers named for Illustrator) ----------
+function toSVG(F) {
+  const { W, H, k, st } = F;
+  const f = n => +n.toFixed(2);
+  const pts = q => q.map(p => f(p[0]) + ',' + f(p[1])).join(' ');
+  const polyEl = t => `<polygon points="${pts(t.q)}" fill="${toHex(t.c)}"${t.a < 0.999 ? ` fill-opacity="${f(t.a)}"` : ''}/>`;
+  const out = [];
+  out.push(`<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}">`);
+  out.push('<defs>');
+  out.push(`<filter id="bandGlow" filterUnits="userSpaceOnUse" x="0" y="0" width="${W}" height="${H}"><feGaussianBlur stdDeviation="${f(st.glow * k)}"/></filter>`);
+  out.push(`<filter id="cellGlow" filterUnits="userSpaceOnUse" x="0" y="0" width="${W}" height="${H}"><feGaussianBlur stdDeviation="${f(st.cellGlow * k)}"/></filter>`);
+  if (F.grid && F.grid.fadeR) {
+    out.push(`<radialGradient id="gridFade" gradientUnits="userSpaceOnUse" cx="${f(F.grid.O[0])}" cy="${f(F.grid.O[1])}" r="${f(F.grid.fadeR)}"><stop offset="0" stop-color="${st.gridColor}" stop-opacity="${st.gridAlpha}"/><stop offset="1" stop-color="${st.gridColor}" stop-opacity="0"/></radialGradient>`);
+  }
+  out.push('</defs>');
+  out.push(`<rect id="Background" width="${W}" height="${H}" fill="${st.bg}"/>`);
+  if (F.grid) {
+    const stroke = F.grid.fadeR ? 'url(#gridFade)' : st.gridColor;
+    const op = F.grid.fadeR ? '' : ` stroke-opacity="${st.gridAlpha}"`;
+    out.push(`<g id="Grid" stroke="${stroke}"${op} stroke-width="${f(F.grid.lw)}" fill="none">`);
+    for (const l of F.grid.lines) out.push(`<line x1="${f(l[0])}" y1="${f(l[1])}" x2="${f(l[2])}" y2="${f(l[3])}"/>`);
+    out.push('</g>');
+  }
+  const tiles = F.tiles.map(polyEl).join('');
+  const cells = F.cells.map(polyEl).join('');
+  if (st.glow > 0 && st.glowStrength > 0) {
+    out.push(`<g id="Band_Glow" filter="url(#bandGlow)" opacity="${f(Math.min(1, st.glowStrength))}" style="mix-blend-mode:screen">${tiles}</g>`);
+  }
+  out.push(`<g id="Band_Fill" opacity="${f(st.fill)}">${tiles}</g>`);
+  if (st.cellGlow > 0) out.push(`<g id="Cell_Glow" filter="url(#cellGlow)" style="mix-blend-mode:screen">${cells}</g>`);
+  out.push(`<g id="Cells">${cells}</g>`);
+  out.push('</svg>');
+  return out.join('\n');
+}
+
+// ---------- Playback ----------
+let time = 0, playing = true, speed = 1, last = performance.now(), dirty = true, rec = null;
+const scrub = document.getElementById('scrub'), timeLbl = document.getElementById('timeLbl');
+const btnPlay = document.getElementById('btnPlay');
+
+function tick(now) {
+  const dt = Math.min(0.1, (now - last) / 1000); last = now;
+  if (rec) {
+    // Offline export owns the canvas until it finishes.
+  } else if (playing) {
+    time += dt * speed;
+    if (time >= S.duration) {
+      if (S.loop) time %= S.duration;
+      else { time = S.duration; playing = false; syncPlay(); }
+    }
+    dirty = true;
+  }
+  if (dirty) {
+    render(cv, buildFrame(S, time), mainScratch);
+    scrub.value = time / S.duration;
+    timeLbl.textContent = `${time.toFixed(2)} / ${S.duration.toFixed(2)}s`;
+    dirty = false;
+  }
+  requestAnimationFrame(tick);
+}
+function syncPlay() { btnPlay.textContent = playing ? 'Pause' : 'Play'; }
+btnPlay.onclick = () => { if (!playing && time >= S.duration) time = 0; playing = !playing; syncPlay(); };
+document.getElementById('btnRestart').onclick = () => { time = 0; dirty = true; };
+scrub.oninput = () => { time = +scrub.value * S.duration; playing = false; syncPlay(); dirty = true; };
+document.getElementById('speed').onchange = e => { speed = +e.target.value; };
+document.addEventListener('keydown', e => {
+  if (e.code === 'Space' && !/INPUT|SELECT|TEXTAREA|BUTTON/.test(document.activeElement.tagName)) {
+    e.preventDefault(); btnPlay.click();
+  }
+});
+
+// ---------- Stage fit + direct manipulation ----------
+const stage = document.getElementById('stage');
+function fit() {
+  const r = stage.getBoundingClientRect(), pad = 24;
+  const s = Math.min((r.width - pad * 2) / S.w, (r.height - pad * 2) / S.h);
+  const w = Math.max(10, S.w * s), h = Math.max(10, S.h * s);
+  Object.assign(cv.style, { width: w + 'px', height: h + 'px', left: (r.width - w) / 2 + 'px', top: (r.height - h) / 2 + 'px' });
+}
+new ResizeObserver(fit).observe(stage);
+
+let drag = null;
+cv.addEventListener('contextmenu', e => e.preventDefault());
+cv.addEventListener('pointerdown', e => {
+  drag = { x: e.clientX, y: e.clientY, pan: e.shiftKey || e.button === 2 || e.button === 1 };
+  cv.setPointerCapture(e.pointerId); cv.classList.add('dragging');
+});
+cv.addEventListener('pointermove', e => {
+  if (!drag) return;
+  const dx = e.clientX - drag.x, dy = e.clientY - drag.y;
+  drag.x = e.clientX; drag.y = e.clientY;
+  if (drag.pan) {
+    const r = cv.getBoundingClientRect();
+    S.offsetX = clamp(S.offsetX + dx / r.width * 100, -100, 100);
+    S.offsetY = clamp(S.offsetY + dy / r.height * 100, -100, 100);
+  } else {
+    S.rotation = ((S.rotation + dx * 0.4 + 540) % 360) - 180;
+    S.tilt = clamp(S.tilt - dy * 0.25, 5, 90);
+  }
+  changed(true);
+});
+const endDrag = () => { drag = null; cv.classList.remove('dragging'); };
+cv.addEventListener('pointerup', endDrag);
+cv.addEventListener('pointercancel', endDrag);
+cv.addEventListener('wheel', e => {
+  e.preventDefault();
+  S.pitch = clamp(S.pitch * Math.exp(-e.deltaY * 0.001), 4, 80);
+  changed(true);
+}, { passive: false });
+
+// ---------- Panel ----------
+const panel = document.getElementById('panel');
+const syncers = [];
+let refreshInfo = () => {};
+const el = (tag, cls, html) => { const n = document.createElement(tag); if (cls) n.className = cls; if (html != null) n.innerHTML = html; return n; };
+const decimals = step => (String(step).split('.')[1] || '').length;
+
+function changed(fromCanvas) {
+  time = Math.min(time, S.duration);
+  if (fromCanvas) syncAll();
+  refreshInfo(); syncPadBtn();
+  save(); dirty = true;
+}
+function syncAll() { syncers.forEach(f => f()); fit(); }
+
+const btnPad = document.getElementById('btnPad');
+btnPad.onclick = () => { S.endPad = !S.endPad; changed(true); };
+function syncPadBtn() {
+  btnPad.textContent = `End pad: ${S.endPad ? 'On' : 'Off'}`;
+  btnPad.className = S.endPad ? 'primary' : '';
+}
+syncers.push(syncPadBtn);
+
+function section(title, open = true) {
+  const d = el('details'); d.open = open;
+  d.append(el('summary', null, title));
+  const body = el('div', 'sec'); d.append(body);
+  panel.append(d);
+  return body;
+}
+function range(parent, key, label, min, max, step, unit = '') {
+  const w = el('div', 'ctl', `<label><span>${label}</span><span class="val"><input type="number"><span>${unit}</span></span></label><input type="range">`);
+  const num = w.querySelector('input[type=number]'), rng = w.querySelector('input[type=range]');
+  for (const i of [num, rng]) { i.min = min; i.max = max; i.step = step; }
+  const set = v => { rng.value = v; num.value = (+v).toFixed(decimals(step)); };
+  rng.oninput = () => { S[key] = +rng.value; num.value = (+rng.value).toFixed(decimals(step)); changed(); };
+  num.onchange = () => { const v = clamp(+num.value || 0, min, max); S[key] = v; set(v); changed(); };
+  syncers.push(() => set(S[key]));
+  parent.append(w);
+  return w;
+}
+function select(parent, key, label, options, onSet) {
+  const w = el('div', 'ctl', `<label><span>${label}</span></label>`);
+  const s = el('select');
+  for (const [v, t] of options) s.append(new Option(t, v));
+  s.onchange = () => { S[key] = isNaN(+s.value) || s.value === '' ? s.value : +s.value; onSet && onSet(); changed(); };
+  syncers.push(() => { s.value = String(S[key]); });
+  w.append(s); parent.append(w);
+  return w;
+}
+function toggle(parent, key, label) {
+  const w = el('label', 'toggle', `<span>${label}</span><input type="checkbox">`);
+  const c = w.querySelector('input');
+  c.onchange = () => { S[key] = c.checked; changed(); };
+  syncers.push(() => { c.checked = !!S[key]; });
+  parent.append(w);
+}
+function color(parent, key, label) {
+  const w = el('label', 'toggle', `<span>${label}</span><input type="color">`);
+  const c = w.querySelector('input');
+  c.oninput = () => { S[key] = c.value; changed(); };
+  syncers.push(() => { c.value = S[key]; });
+  parent.append(w);
+}
+function buttons(parent, list) {
+  const b = el('div', 'btns');
+  for (const [t, fn, cls] of list) { const x = el('button', cls, t); x.onclick = fn; b.append(x); }
+  parent.append(b);
+  return b;
+}
+function applyPreset(p) {
+  const keep = { w: S.w, h: S.h, fps: S.fps, loops: S.loops };
+  S = Object.assign(clone(DEFAULTS), clone(p.s), keep);
+  time = 0; playing = true; syncPlay();
+  syncAll(); renderStops(); renderRings(); save(); dirty = true;
+}
+
+// Presets
+{
+  const sec = section('Presets');
+  const grid = el('div', 'presets');
+  for (const p of PRESETS) {
+    const b = el('button', 'preset');
+    const c = el('canvas'); b.append(c, el('span', null, p.name));
+    const st = Object.assign(clone(DEFAULTS), clone(p.s), { w: 480, h: 270, mode: 'static', twinkle: 0, pulse: 0 });
+    const scratch = [document.createElement('canvas'), null, document.createElement('canvas'), null];
+    scratch[1] = scratch[0].getContext('2d'); scratch[3] = scratch[2].getContext('2d');
+    render(c, buildFrame(st, st.duration * 0.999), scratch);
+    b.onclick = () => applyPreset(p);
+    grid.append(b);
+  }
+  sec.append(grid);
+}
+
+// View
+{
+  const sec = section('View · angle & rotation');
+  range(sec, 'rotation', 'Rotation', -180, 180, 0.5, '°');
+  range(sec, 'tilt', 'Angle (camera tilt)', 5, 90, 0.01, '°');
+  buttons(sec, [
+    ['Iso 2:1', () => { S.rotation = 45; S.tilt = 30; changed(true); }],
+    ['True iso', () => { S.rotation = 45; S.tilt = 35.26; changed(true); }],
+    ['Low', () => { S.tilt = 22; changed(true); }],
+    ['Top-down', () => { S.rotation = 0; S.tilt = 90; changed(true); }],
+  ]);
+  range(sec, 'pathAngle', 'Path direction on grid', -180, 180, 0.5, '°');
+  range(sec, 'roll', 'Screen roll', -180, 180, 0.5, '°');
+  range(sec, 'pitch', 'Zoom (cell pitch)', 4, 80, 0.5, 'px');
+  const r2 = el('div', 'row2'); sec.append(r2);
+  range(r2, 'offsetX', 'Position X', -100, 100, 0.5, '%');
+  range(r2, 'offsetY', 'Position Y', -100, 100, 0.5, '%');
+}
+
+// Path
+{
+  const sec = section('Pixel path');
+  const r = el('div', 'row2'); sec.append(r);
+  range(r, 'length', 'Length', 2, 300, 1, 'cells');
+  range(r, 'width', 'Width', 1, 80, 1, 'cells');
+  range(sec, 'gap', 'Gap between pixels', 0, 0.9, 0.01);
+  range(sec, 'solid', 'Solid zone (pixels merge)', 0, 1, 0.01);
+  const r2 = el('div', 'row2'); sec.append(r2);
+  select(r2, 'solidEnd', 'Solid at', [['start', 'Start'], ['end', 'End']]);
+  range(r2, 'solidDither', 'Dither', 0, 1, 0.01);
+  range(sec, 'seed', 'Random seed', 0, 999, 1);
+}
+
+// Colors
+let renderStops, renderRings = () => {};
+{
+  const sec = section('Gradient overlay');
+  const bar = el('div', 'gradbar'); sec.append(bar);
+  const list = el('div'); list.style.display = 'grid'; list.style.gap = '6px'; sec.append(list);
+  renderStops = () => {
+    const sorted = [...S.stops].sort((a, b) => a.p - b.p);
+    bar.style.background = `linear-gradient(90deg, ${sorted.map(s => `${s.c} ${(s.p * 100).toFixed(1)}%`).join(', ')})`;
+    list.innerHTML = '';
+    S.stops.forEach((s, i) => {
+      const row = el('div', 'stop');
+      const c = el('input'); c.type = 'color'; c.value = s.c;
+      const r = el('input'); r.type = 'range'; r.min = 0; r.max = 1; r.step = 0.005; r.value = s.p;
+      const n = el('input'); n.type = 'number'; n.min = 0; n.max = 100; n.step = 0.5; n.value = (s.p * 100).toFixed(1);
+      const x = el('button', null, '×'); x.title = 'Remove stop'; x.disabled = S.stops.length <= 2;
+      const upd = () => {
+        const so = [...S.stops].sort((a, b) => a.p - b.p);
+        bar.style.background = `linear-gradient(90deg, ${so.map(q => `${q.c} ${(q.p * 100).toFixed(1)}%`).join(', ')})`;
+        changed();
+      };
+      c.oninput = () => { s.c = c.value; upd(); };
+      r.oninput = () => { s.p = +r.value; n.value = (s.p * 100).toFixed(1); upd(); };
+      n.onchange = () => { s.p = clamp01((+n.value || 0) / 100); r.value = s.p; upd(); };
+      x.onclick = () => { S.stops.splice(i, 1); renderStops(); changed(); };
+      row.append(c, r, n, x); list.append(row);
+    });
+  };
+  buttons(sec, [
+    ['+ Add stop', () => {
+      const so = [...S.stops].sort((a, b) => a.p - b.p);
+      let gi = 0, gw = -1;
+      for (let i = 1; i < so.length; i++) if (so[i].p - so[i - 1].p > gw) { gw = so[i].p - so[i - 1].p; gi = i; }
+      const p = gi ? (so[gi].p + so[gi - 1].p) / 2 : 0.5;
+      S.stops.push({ p, c: toHex(sampler(S.stops)(p)) }); renderStops(); changed();
+    }],
+    ['Reverse', () => { S.stops.forEach(s => { s.p = +(1 - s.p).toFixed(4); }); renderStops(); changed(); }],
+  ]);
+  const r = el('div', 'row2'); sec.append(r);
+  select(r, 'gradAxis', 'Direction', [['along', 'Along path'], ['across', 'Across path']]);
+  color(r, 'bg', 'Background');
+  range(sec, 'cellWhite', 'Pixel brightness (tint → white)', 0, 1, 0.01);
+  range(sec, 'fill', 'Band fill between pixels', 0, 1, 0.01);
+  range(sec, 'glow', 'Band glow radius', 0, 60, 0.5, 'px');
+  range(sec, 'glowStrength', 'Band glow strength', 0, 2, 0.01);
+  range(sec, 'cellGlow', 'Pixel glow radius', 0, 20, 0.5, 'px');
+}
+
+// Grid
+{
+  const sec = section('Isometric grid', false);
+  toggle(sec, 'grid', 'Show grid lines');
+  const r = el('div', 'row2'); sec.append(r);
+  color(r, 'gridColor', 'Line color');
+  range(r, 'gridEvery', 'Every', 1, 8, 1, 'cells');
+  range(sec, 'gridAlpha', 'Opacity', 0, 0.5, 0.005);
+  range(sec, 'gridFade', 'Fade from path', 0, 1, 0.01);
+}
+
+// Animation
+{
+  const sec = section('Animation');
+  select(sec, 'mode', 'Motion', [['drawIn', 'Draw in (build the path)'], ['drawInOut', 'Draw in → out'], ['travel', 'Travel (moving segment)'], ['static', 'Static path']], () => syncAll());
+  const r = el('div', 'row2'); sec.append(r);
+  range(r, 'duration', 'Loop length', 0.5, 20, 0.1, 's');
+  range(r, 'drawPortion', 'Draw time', 0.05, 1, 0.01, '×');
+  const r2 = el('div', 'row2'); sec.append(r2);
+  select(r2, 'easing', 'Easing', [['linear', 'Linear'], ['easeOut', 'Ease out'], ['easeInOut', 'Ease in-out'], ['expoOut', 'Expo out']]);
+  range(r2, 'segment', 'Travel length', 0.05, 1, 0.01);
+  range(sec, 'soft', 'Leading edge softness', 0.005, 0.6, 0.005);
+  range(sec, 'revealDither', 'Pixel scatter on reveal', 0, 0.8, 0.01);
+  toggle(sec, 'revealReverse', 'Reveal from the far end');
+  toggle(sec, 'loop', 'Loop playback');
+}
+
+// End pad
+{
+  const sec = section('Settle → end pad');
+  toggle(sec, 'endPad', 'Dissolve path into end pad');
+  const note = el('div', 'note'); sec.append(note);
+  syncers.push(() => {
+    const ok = S.mode === 'drawIn' || S.mode === 'static';
+    note.textContent = ok ? 'After the path settles, it dissolves and leaves a pixel pad at its last point.'
+      : 'Works with the "Draw in" and "Static path" motions.';
+  });
+  select(sec, 'padShape', 'Pad shape', [['square', 'Square'], ['rect', 'Rectangle']], () => syncAll());
+  const shapeNote = el('div', 'note'); sec.append(shapeNote);
+  const depth = range(sec, 'padD', 'Pad depth (along the path)', 1, 300, 1, 'cells');
+  syncers.push(() => {
+    const sqr = S.padShape === 'square';
+    shapeNote.textContent = sqr
+      ? 'Square: the end of the path, as deep as the path is wide.'
+      : 'Rectangle: the full path width, with the depth set below.';
+    depth.style.display = sqr ? 'none' : '';
+  });
+  const r2 = el('div', 'row2'); sec.append(r2);
+  range(r2, 'dissolveAt', 'Dissolve starts', 0, 1, 0.01, '×');
+  range(r2, 'dissolveDur', 'Dissolve time', 0.02, 1, 0.01, '×');
+  const r3 = el('div', 'row2'); sec.append(r3);
+  select(r3, 'dissolveStyle', 'Dissolve', [['wipe', 'Retract to pad'], ['scatter', 'Random scatter']]);
+  range(r3, 'dissolveDither', 'Scatter', 0, 1, 0.01);
+  select(sec, 'padRings', 'Concentric rings', [['shape', 'Follow pad shape'], ['circle', 'Circular']]);
+  toggle(sec, 'padOut', 'Pad disappears (ripple outward)');
+  const r5 = el('div', 'row2'); sec.append(r5);
+  range(r5, 'padOutAt', 'Ripple starts', 0, 1, 0.01, '×');
+  range(r5, 'padOutDur', 'Ripple time', 0.02, 1, 0.01, '×');
+  range(sec, 'padWave', 'Ripple brightness', 0, 1, 0.01);
+  select(sec, 'padColor', 'Pad colours', [['rings', 'Rings (one colour per ring)'], ['mosaic', 'Mosaic (random from gradient)'], ['band', 'Keep gradient'], ['end', 'Path end colour']], () => syncAll());
+  const ringBox = el('div'); ringBox.style.display = 'grid'; ringBox.style.gap = '6px'; sec.append(ringBox);
+  renderRings = () => {
+    ringBox.innerHTML = '';
+    ringBox.append(el('div', 'note', 'Rings from the outer edge inward, width in cells. The last colour fills the centre.'));
+    const list = S.padRingList;
+    list.forEach((rg, i) => {
+      const last = i === list.length - 1;
+      const row = el('div', 'stop');
+      row.style.gridTemplateColumns = '34px 1fr 52px 26px';
+      const c = el('input'); c.type = 'color'; c.value = rg.c;
+      const lbl = el('span', 'note', last ? 'Centre (fills rest)' : i === 0 ? 'Outer ring' : `Ring ${i + 1}`);
+      const n = el('input'); n.type = 'number'; n.min = 1; n.max = 40; n.step = 1; n.value = rg.w; n.disabled = last;
+      const x = el('button', null, '×'); x.title = 'Remove ring'; x.disabled = list.length <= 1;
+      c.oninput = () => { rg.c = c.value; changed(); };
+      n.onchange = () => { rg.w = clamp(Math.round(+n.value || 1), 1, 40); n.value = rg.w; changed(); };
+      x.onclick = () => { list.splice(i, 1); renderRings(); changed(); };
+      row.append(c, lbl, n, x); ringBox.append(row);
+    });
+    buttons(ringBox, [['+ Add ring', () => {
+      const at = Math.max(0, list.length - 1);
+      list.splice(at, 0, { c: (list[at - 1] || list[0] || { c: '#13A383' }).c, w: 1 });
+      renderRings(); changed();
+    }]]);
+  };
+  syncers.push(() => { ringBox.style.display = S.padColor === 'rings' ? 'grid' : 'none'; });
+  range(sec, 'padJitter', 'Colour variation per pixel', 0, 1, 0.01);
+  range(sec, 'padWhite', 'Pad pixel brightness', 0, 1, 0.01);
+  const r4 = el('div', 'row2'); sec.append(r4);
+  range(r4, 'padGap', 'Pad gap', 0, 0.9, 0.01);
+  range(r4, 'padFill', 'Pad fill', 0, 1, 0.01);
+  range(sec, 'padEdge', 'Edge fade to grey', 0, 1, 0.01);
+}
+
+// Overlay motion
+{
+  const sec = section('Gradient & light motion');
+  const r = el('div', 'row2'); sec.append(r);
+  select(r, 'flowCycles', 'Gradient flow', [[0, 'Off'], [1, '1 per loop'], [2, '2 per loop'], [3, '3 per loop']]);
+  toggle(r, 'flowReverse', 'Reverse');
+  range(sec, 'pulse', 'Light pulse intensity', 0, 1, 0.01);
+  const r2 = el('div', 'row2'); sec.append(r2);
+  range(r2, 'pulseWidth', 'Pulse width', 0.01, 0.5, 0.005);
+  range(r2, 'pulseCount', 'Pulses / loop', 0, 6, 1);
+  range(sec, 'twinkle', 'Pixel twinkle', 0, 1, 0.01);
+  range(sec, 'twinkleSpeed', 'Twinkle speed', 1, 8, 1);
+}
+
+// Output
+{
+  const sec = section('Output');
+  const w = el('div', 'ctl', '<label><span>Canvas size</span></label>');
+  const s = el('select');
+  for (const v of ['1920x1080', '2560x1440', '3840x2160', '1080x1080', '1080x1350', '1080x1920', '1200x628'])
+    s.append(new Option(v.replace('x', ' × '), v));
+  s.onchange = () => { const [a, b] = s.value.split('x').map(Number); S.w = a; S.h = b; fit(); changed(); };
+  syncers.push(() => {
+    const v = `${S.w}x${S.h}`;
+    if (![...s.options].some(o => o.value === v)) s.append(new Option(v.replace('x', ' × '), v));
+    s.value = v;
+  });
+  w.append(s); sec.append(w);
+  select(sec, 'exportFormat', 'Animation format', [
+    ['mp4', 'MP4 video (H.264)'],
+    ['pngZip', 'PNG sequence (.zip)'],
+    ['pngFolder', 'PNG sequence (save to folder)'],
+  ]);
+  const r = el('div', 'row2'); sec.append(r);
+  select(r, 'fps', 'Frame rate', [[24, '24 fps'], [25, '25 fps'], [30, '30 fps'], [50, '50 fps'], [60, '60 fps']]);
+  range(r, 'loops', 'Loops', 1, 6, 1);
+  select(sec, 'quality', 'MP4 quality', [['medium', 'Medium'], ['high', 'High'], ['veryHigh', 'Very high']]);
+  toggle(sec, 'transparent', 'Transparent background (PNG only)');
+  const info = el('div', 'note'); sec.append(info);
+  refreshInfo = () => {
+    const n = Math.round(S.duration * S.loops * S.fps);
+    info.textContent = `${n} frames · ${(S.duration * S.loops).toFixed(2)}s at ${S.w} × ${S.h}`;
+  };
+  syncers.push(refreshInfo);
+  buttons(sec, [
+    ['Save settings', () => download(new Blob([JSON.stringify(S, null, 2)], { type: 'application/json' }), 'pixel-path-settings.json')],
+    ['Load settings', () => fileIn.click()],
+    ['Reset', () => applyPreset(PRESETS[0])],
+  ]);
+  sec.append(el('div', 'note', 'Animation exports render every frame offline, so they are frame-accurate and loop seamlessly. "Save to folder" writes PNGs straight to disk (Chrome/Edge) and suits long or 4K sequences. SVG exports the current frame with named layers for Illustrator.'));
+  const fileIn = el('input'); fileIn.type = 'file'; fileIn.accept = 'application/json,.json'; fileIn.hidden = true;
+  fileIn.onchange = async () => {
+    const f = fileIn.files[0]; if (!f) return;
+    try {
+      const j = JSON.parse(await f.text());
+      applyPreset({ s: j });
+      if (j.w && j.h) { S.w = j.w; S.h = j.h; syncAll(); save(); }
+      toast('Settings loaded');
+    }
+    catch (e) { toast('Could not read that settings file'); }
+    fileIn.value = '';
+  };
+  sec.append(fileIn);
+}
+
+// ---------- Exports ----------
+function download(blob, name) {
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob); a.download = name;
+  document.body.append(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+}
+let toastT;
+function toast(msg) {
+  const t = document.getElementById('toast'); t.textContent = msg; t.classList.add('show');
+  clearTimeout(toastT); toastT = setTimeout(() => t.classList.remove('show'), 2400);
+}
+document.getElementById('btnPng').onclick = () => {
+  render(cv, buildFrame(S, time), mainScratch);
+  cv.toBlob(b => download(b, `pixel-path-${S.w}x${S.h}.png`), 'image/png');
+};
+document.getElementById('btnSvg').onclick = () => {
+  download(new Blob([toSVG(buildFrame(S, time))], { type: 'image/svg+xml' }), `pixel-path-${S.w}x${S.h}.svg`);
+};
+// Minimal store-only ZIP writer (PNGs are already compressed).
+const CRC_TABLE = (() => {
+  const t = new Uint32Array(256);
+  for (let n = 0; n < 256; n++) { let c = n; for (let k = 0; k < 8; k++) c = c & 1 ? 0xEDB88320 ^ (c >>> 1) : c >>> 1; t[n] = c >>> 0; }
+  return t;
+})();
+function crc32(u8) {
+  let c = 0xFFFFFFFF;
+  for (let i = 0; i < u8.length; i++) c = CRC_TABLE[(c ^ u8[i]) & 255] ^ (c >>> 8);
+  return (c ^ 0xFFFFFFFF) >>> 0;
+}
+function zipWriter() {
+  const parts = [], central = [];
+  let offset = 0;
+  return {
+    add(name, u8) {
+      const nb = new TextEncoder().encode(name), crc = crc32(u8);
+      const h = new DataView(new ArrayBuffer(30));
+      h.setUint32(0, 0x04034b50, true); h.setUint16(4, 20, true); h.setUint16(8, 0, true);
+      h.setUint32(14, crc, true); h.setUint32(18, u8.length, true); h.setUint32(22, u8.length, true);
+      h.setUint16(26, nb.length, true);
+      const c = new DataView(new ArrayBuffer(46));
+      c.setUint32(0, 0x02014b50, true); c.setUint16(4, 20, true); c.setUint16(6, 20, true);
+      c.setUint32(16, crc, true); c.setUint32(20, u8.length, true); c.setUint32(24, u8.length, true);
+      c.setUint16(28, nb.length, true); c.setUint32(42, offset, true);
+      parts.push(h.buffer, nb, new Blob([u8]));
+      central.push(c.buffer, nb);
+      offset += 30 + nb.length + u8.length;
+      if (offset > 0xFFFFFFFF) throw new Error('ZIP over 4 GB — use "Save to folder" instead');
+    },
+    blob(count) {
+      const size = central.reduce((s, p) => s + (p.byteLength ?? p.length), 0);
+      const e = new DataView(new ArrayBuffer(22));
+      e.setUint32(0, 0x06054b50, true); e.setUint16(8, count, true); e.setUint16(10, count, true);
+      e.setUint32(12, size, true); e.setUint32(16, offset, true);
+      return new Blob([...parts, ...central, e.buffer], { type: 'application/zip' });
+    },
+  };
+}
+
+const btnRec = document.getElementById('btnRec');
+const canvasBlob = (c, type) => new Promise((res, rej) => c.toBlob(b => b ? res(b) : rej(new Error('Frame encode failed')), type));
+const nextPaint = () => new Promise(r => requestAnimationFrame(() => r()));
+
+async function exportAnimation() {
+  const fmt = S.exportFormat, fps = S.fps, D = S.duration;
+  const total = Math.max(1, Math.round(D * S.loops * fps));
+  const base = `pixel-path-${S.w}x${S.h}-${fps}fps`;
+  const pad = String(total - 1).length < 5 ? 5 : String(total - 1).length;
+  const job = { cancelled: false };
+  const frameTime = i => (i / fps) % D;
+  const transparent = fmt !== 'mp4' && S.transparent;
+
+  let output, source, zip, dir;
+  if (fmt === 'mp4') {
+    const MB = window.Mediabunny;
+    if (!MB || !window.VideoEncoder) throw new Error('MP4 export needs a browser with WebCodecs (Chrome, Edge, or Safari 17+)');
+    const quality = { medium: MB.QUALITY_MEDIUM, high: MB.QUALITY_HIGH, veryHigh: MB.QUALITY_VERY_HIGH }[S.quality] || MB.QUALITY_HIGH;
+    if (!(await MB.canEncodeVideo('avc', { width: S.w, height: S.h, bitrate: quality })))
+      throw new Error(`This browser can't encode H.264 at ${S.w} × ${S.h}`);
+    output = new MB.Output({ format: new MB.Mp4OutputFormat({ fastStart: 'in-memory' }), target: new MB.BufferTarget() });
+    source = new MB.CanvasSource(cv, { codec: 'avc', bitrate: quality, keyFrameInterval: 2 });
+    output.addVideoTrack(source, { frameRate: fps });
+    await output.start();
+  } else if (fmt === 'pngFolder') {
+    if (!window.showDirectoryPicker) throw new Error('Saving to a folder needs Chrome or Edge — use the .zip option instead');
+    const root = await window.showDirectoryPicker({ mode: 'readwrite' });
+    dir = await root.getDirectoryHandle(base, { create: true });
+  } else {
+    zip = zipWriter();
+  }
+
+  rec = { stop() { job.cancelled = true; } };
+  playing = false; syncPlay();
+  btnRec.className = 'rec';
+  try {
+    for (let i = 0; i < total; i++) {
+      if (job.cancelled) break;
+      render(cv, buildFrame(S, frameTime(i)), mainScratch, transparent);
+      if (fmt === 'mp4') {
+        await source.add(i / fps, 1 / fps);
+      } else {
+        const blob = await canvasBlob(cv, 'image/png');
+        const name = `${base}_${String(i).padStart(pad, '0')}.png`;
+        if (dir) {
+          const fh = await dir.getFileHandle(name, { create: true });
+          const w = await fh.createWritable(); await w.write(blob); await w.close();
+        } else {
+          zip.add(name, new Uint8Array(await blob.arrayBuffer()));
+        }
+      }
+      btnRec.textContent = `Cancel · ${Math.round((i + 1) / total * 100)}%`;
+      timeLbl.textContent = `frame ${i + 1} / ${total}`;
+      if (i % 4 === 3) await nextPaint();
+    }
+    if (job.cancelled) {
+      if (output) await output.cancel();
+      toast('Export cancelled');
+      return;
+    }
+    if (fmt === 'mp4') {
+      await output.finalize();
+      download(new Blob([output.target.buffer], { type: 'video/mp4' }), `${base}.mp4`);
+      toast(`MP4 saved · ${total} frames`);
+    } else if (dir) {
+      toast(`${total} PNGs saved to folder "${base}"`);
+    } else {
+      download(zip.blob(total), `${base}-png.zip`);
+      toast(`PNG sequence saved · ${total} frames`);
+    }
+  } finally {
+    rec = null;
+    btnRec.textContent = 'Export animation'; btnRec.className = 'primary';
+    dirty = true;
+  }
+}
+
+btnRec.onclick = () => {
+  if (rec) { rec.stop(); return; }
+  exportAnimation().catch(e => {
+    rec = null; btnRec.textContent = 'Export animation'; btnRec.className = 'primary'; dirty = true;
+    if (e && e.name === 'AbortError') return; // folder picker dismissed
+    console.error(e); toast(e.message || 'Export failed');
+  });
+};
+
+syncAll();
+renderStops();
+renderRings();
+requestAnimationFrame(tick);
+})();
+</script>
+</body>
+</html>
